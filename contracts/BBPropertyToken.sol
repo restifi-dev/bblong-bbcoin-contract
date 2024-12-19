@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Snapshot.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./ComplianceRegistry.sol";
 
 /**
@@ -16,7 +17,7 @@ import "./ComplianceRegistry.sol";
  * - Compliance-checked token transfers
  * - Snapshot-based dividend distribution
  * - Role-based minting and admin controls
- * - ETH dividend payments
+ * - ETH and ERC20 token dividend payments
  * - Dividend claiming with expiration
  */
 contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
@@ -34,6 +35,7 @@ contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
         uint256 perTokenAmount;
         uint256 claimedAmount;
         bool initialized;
+        address tokenAddress; // Address of the token being distributed (address(0) for ETH)
         mapping(address => bool) hasClaimed;
     }
 
@@ -41,7 +43,7 @@ contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
     mapping(uint256 => DividendDistribution) public dividendDistributions;
     uint256 public currentDistributionId;
 
-    event DividendDistributionCreated(uint256 indexed distributionId, uint256 amount, uint256 snapshotId);
+    event DividendDistributionCreated(uint256 indexed distributionId, address indexed tokenAddress, uint256 amount, uint256 snapshotId);
     event DividendClaimed(uint256 indexed distributionId, address indexed account, uint256 amount);
     event ComplianceIdSet(uint256 indexed complianceId);
 
@@ -101,21 +103,32 @@ contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
     }
 
     /**
-     * @dev Creates a new dividend distribution with ETH
-     * @param amount Amount of ETH to distribute
+     * @dev Creates a new dividend distribution with ETH or ERC20 tokens
+     * @param amount Amount of tokens to distribute
+     * @param tokenAddress Address of the token to distribute (use address(0) for ETH)
      * Requirements:
-     * - Must send ETH with the transaction
+     * - For ETH: Must send ETH with the transaction
+     * - For tokens: Must approve contract to spend tokens
      * - Must have non-zero total supply
      * - Caller must have ADMIN_ROLE
      */
-    function createDividendDistribution(uint256 amount) 
+    function createDividendDistribution(uint256 amount, address tokenAddress) 
         external 
         payable 
         onlyRole(ADMIN_ROLE) 
         nonReentrant 
         returns (uint256) 
     {
-        require(msg.value == amount, "Incorrect ETH amount");
+        if (tokenAddress == address(0)) {
+            // ETH distribution
+            require(msg.value == amount, "Incorrect ETH amount");
+        } else {
+            // ERC20 token distribution
+            require(msg.value == 0, "ETH not needed for token distribution");
+            IERC20 token = IERC20(tokenAddress);
+            require(token.transferFrom(msg.sender, address(this), amount), "Token transfer failed");
+        }
+
         require(amount > 0, "Amount must be greater than 0");
 
         uint256 snapshotId = snapshot();
@@ -129,8 +142,9 @@ contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
         distribution.totalAmount = amount;
         distribution.perTokenAmount = (amount * 1e18) / totalSupplyAtSnapshot; // Scale by 1e18 for precision
         distribution.initialized = true;
+        distribution.tokenAddress = tokenAddress;
 
-        emit DividendDistributionCreated(distributionId, amount, snapshotId);
+        emit DividendDistributionCreated(distributionId, tokenAddress, amount, snapshotId);
         return distributionId;
     }
 
@@ -161,8 +175,15 @@ contract BBPropertyToken is ERC20Snapshot, AccessControl, ReentrancyGuard {
         distribution.hasClaimed[msg.sender] = true;
         distribution.claimedAmount += dividendAmount;
 
-        (bool success, ) = msg.sender.call{value: dividendAmount}("");
-        require(success, "ETH transfer failed");
+        if (distribution.tokenAddress == address(0)) {
+            // ETH distribution
+            (bool success, ) = msg.sender.call{value: dividendAmount}("");
+            require(success, "ETH transfer failed");
+        } else {
+            // ERC20 token distribution
+            IERC20 token = IERC20(distribution.tokenAddress);
+            require(token.transfer(msg.sender, dividendAmount), "Token transfer failed");
+        }
 
         emit DividendClaimed(distributionId, msg.sender, dividendAmount);
     }
