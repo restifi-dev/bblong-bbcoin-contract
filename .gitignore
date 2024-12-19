@@ -1,0 +1,39 @@
+# Dependency directories
+node_modules/
+coverage/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Hardhat files
+cache/
+artifacts/
+typechain/
+typechain-types/
+
+# Test coverage
+coverage/
+coverage.json
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production build files
+dist/
+build/
+
+# Hardhat deployment files
+deployments/
+
+# Local Hardhat network data
+.hardhat/
